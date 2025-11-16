@@ -1,17 +1,19 @@
+
 # PR Reviewer Assignment Service
 
-Сервис автоматического назначения ревьюеров на Pull Request'ы
+Сервис автоматического назначения ревьюеров на Pull Request'ы по тестовому заданию Backend (осень 2025). [file:169]
 
 ## Описание
 
-Микросервис предоставляет HTTP API для:
-- управления командами и участниками;
-- создания PR с автоматическим назначением до двух активных ревьюверов из команды автора (автор исключается);
-- переназначения ревьюверов в соответствии с правилами ТЗ;
+Микросервис предоставляет HTTP API для: [file:169]
+- управления командами и участниками; [file:169]
+- создания PR с автоматическим назначением до двух активных ревьюверов из команды автора (автор исключается); [file:169]
+- переназначения ревьюверов по правилам ТЗ (в том числе массово при деактивации команды); [file:169]
 - merge PR (идемпотентная операция); [file:169]
-- получения списка PR, назначенных на конкретного пользователя. [file:169]
+- получения списка PR, назначенных конкретному пользователю; [file:1]
+- получения простой статистики по назначениям и статусам PR. [file:169]
 
-API строго соответствует спецификации `openapi.yml` в корне репозитория. [file:1]
+API следует спецификации `openapi.yml`, лежащей в корне репозитория. [file:1]
 
 ## Запуск
 
@@ -26,7 +28,7 @@ docker-compose up --build
 Команда: [file:169]
 - поднимет PostgreSQL (user: `app`, password: `app`, db: `app`); [file:169]
 - соберёт и запустит сервис на Go 1.25.1; [file:169]
-- автоматически применит SQL-миграцию `001_init.sql` (создание таблиц и enum `pr_status`). [file:169]
+- автоматически применит SQL‑миграцию `001_init.sql` (создание таблиц и enum `pr_status`). [file:169]
 
 После старта сервис доступен по адресу `http://localhost:8080`. [file:169]
 
@@ -42,16 +44,29 @@ curl http://localhost:8080/health
 {"status":"ok"}
 ```
 
+Также в корне есть `Makefile` с удобными командами: [file:169]
+
+```
+make build        # локальная сборка бинарника
+make run          # запуск без Docker (нужен DATABASE_URL)
+make test         # запуск тестов, если добавлены
+make docker-up    # docker-compose up --build
+make docker-down  # docker-compose down
+make docker-down-v # docker-compose down -v (снос volume с БД)
+make docker-logs  # хвост логов app и db
+make lint         # запуск линтера (при наличии golangci-lint)
+```
+
 ## Основные эндпоинты
 
-Ниже краткие примеры запросов, полный контракт описан в `openapi.yml`. [file:1]
+Ниже краткие примеры запросов; полный контракт описан в `openapi.yml`. [file:1]
 
 ### Команды
 
 Создать команду: [file:1]
 
 ```
-curl -X POST http://localhost:8080/team/add \
+curl -i -X POST http://localhost:8080/team/add \
   -H "Content-Type: application/json" \
   -d '{
         "team_name": "backend",
@@ -66,7 +81,25 @@ curl -X POST http://localhost:8080/team/add \
 Получить команду: [file:1]
 
 ```
-curl "http://localhost:8080/team/get?team_name=backend"
+curl -i "http://localhost:8080/team/get?team_name=backend"
+```
+
+Массовая деактивация пользователей команды с безопасным переназначением их открытых PR: [file:169]
+
+```
+curl -i -X POST http://localhost:8080/team/deactivateUsers \
+  -H "Content-Type: application/json" \
+  -d '{ "team_name": "backend" }'
+```
+
+Ожидаемый ответ: [file:169]
+
+```
+{
+  "team_name": "backend",
+  "deactivated_users": 3,
+  "reassigned_reviewers": 2
+}
 ```
 
 ### Пользователи
@@ -74,7 +107,7 @@ curl "http://localhost:8080/team/get?team_name=backend"
 Смена активности пользователя: [file:1]
 
 ```
-curl -X POST http://localhost:8080/users/setIsActive \
+curl -i -X POST http://localhost:8080/users/setIsActive \
   -H "Content-Type: application/json" \
   -d '{ "user_id": "u2", "is_active": false }'
 ```
@@ -82,7 +115,23 @@ curl -X POST http://localhost:8080/users/setIsActive \
 Получить PR, назначенные пользователю: [file:1]
 
 ```
-curl "http://localhost:8080/users/getReview?user_id=u2"
+curl -i "http://localhost:8080/users/getReview?user_id=u2"
+```
+
+Ответ: [file:1]
+
+```
+{
+  "user_id": "u2",
+  "pull_requests": [
+    {
+      "pull_request_id": "pr-1",
+      "pull_request_name": "Add feature",
+      "author_id": "u1",
+      "status": "OPEN"
+    }
+  ]
+}
 ```
 
 ### Pull Request'ы
@@ -90,7 +139,7 @@ curl "http://localhost:8080/users/getReview?user_id=u2"
 Создать PR (автоназначение ревьюверов): [file:1][file:169]
 
 ```
-curl -X POST http://localhost:8080/pullRequest/create \
+curl -i -X POST http://localhost:8080/pullRequest/create \
   -H "Content-Type: application/json" \
   -d '{
         "pull_request_id": "pr-1",
@@ -102,7 +151,7 @@ curl -X POST http://localhost:8080/pullRequest/create \
 Переназначить ревьювера: [file:1][file:169]
 
 ```
-curl -X POST http://localhost:8080/pullRequest/reassign \
+curl -i -X POST http://localhost:8080/pullRequest/reassign \
   -H "Content-Type: application/json" \
   -d '{
         "pull_request_id": "pr-1",
@@ -110,61 +159,57 @@ curl -X POST http://localhost:8080/pullRequest/reassign \
       }'
 ```
 
+Ответ содержит обновлённый PR и `replaced_by` с `user_id` нового ревьювера. [file:1]
+
 Merge PR (идемпотентно): [file:1][file:169]
 
 ```
-curl -X POST http://localhost:8080/pullRequest/merge \
+curl -i -X POST http://localhost:8080/pullRequest/merge \
   -H "Content-Type: application/json" \
   -d '{ "pull_request_id": "pr-1" }'
 ```
 
-Повторный вызов возвращает актуальное состояние PR в статусе `MERGED` без ошибки. [file:1][file:169]
+Повторный вызов возвращает актуальное состояние PR со статусом `MERGED` без ошибки. [file:1][file:169]
+
+### Статистика
+
+Простой эндпоинт статистики: [file:169]
+
+```
+curl -i http://localhost:8080/stats
+```
+
+Пример ответа: [file:169]
+
+```
+{
+  "per_reviewer": {
+    "u2": 5,
+    "u3": 8
+  },
+  "per_status": {
+    "OPEN": 3,
+    "MERGED": 10
+  }
+}
+```
 
 ## Архитектура
 
-Проект разбит на слои: [file:169]
-- `cmd/app` — точка входа, инициализация подключения к БД, миграций и HTTP‑роутера. [file:169]
-- `internal/domain` — доменные модели (`Team`, `User`, `PullRequest` и т.п.). [file:169]
-- `internal/service` — бизнес-логика (назначение/переназначение ревьюверов, merge, работа с командами и пользователями). [file:169]
-- `internal/repository/postgres` — репозитории поверх PostgreSQL (`teams`, `users`, `pull_requests`, `pull_request_reviewers`). [file:169]
-- `internal/http` — HTTP‑хендлеры и роутер на основе `chi`. [file:169]
-- `internal/db` — подключение к базе и применение миграций через `go:embed`. [file:169]
-- `internal/errs` — доменные ошибки и маппинг в формат `ErrorResponse` из OpenAPI. [file:1][file:169]
+Проект разбит на слои:
+- `cmd/app` — точка входа, инициализация подключения к БД, миграций и HTTP‑роутера. 
+- `internal/domain` — доменные модели (`Team`, `User`, `PullRequest` и т.д.).
+- `internal/service` — бизнес-логика (назначение и переназначение ревьюверов, merge, управление командами и пользователями, массовая деактивация). 
+- `internal/repository/postgres` — репозитории поверх PostgreSQL (`teams`, `users`, `pull_requests`, `pull_request_reviewers`). 
+- `internal/http` — HTTP‑хендлеры и роутер на базе `chi`. 
+- `internal/db` — подключение к БД и применение миграций через `go:embed`.
+- `internal/errs` — доменные ошибки и маппинг в формат `ErrorResponse` из OpenAPI. 
 
-Сервис использует интерфейсы репозиториев, поэтому при необходимости in-memory реализацию можно включить, не меняя сервисный слой. [file:169]
+Сервис использует интерфейсы репозиториев, поэтому можно при необходимости включить in‑memory реализацию для локальных тестов, не меняя сервисный слой. 
 
-## Ключевые решения и допущения
+## Дополнительные задания
 
-1. **PostgreSQL как основное хранилище.**
-   Несмотря на допустимую in-memory реализацию в ТЗ, используется PostgreSQL 16, чтобы показать работу с реальной БД и поддержать персистентность данных между перезапусками. [file:169]
-
-2. **Миграции через `go:embed`.**
-   Одна SQL‑миграция `001_init.sql` встраивается в бинарник и выполняется при старте, тип `pr_status` создаётся в DO‑блоке с проверкой существования, чтобы миграции были идемпотентны. [file:169]
-
-3. **Случайный выбор ревьюверов.**
-   Для назначения и переназначения используется `math/rand` с перетасовкой списка кандидатов, что удовлетворяет требованию случайности в рамках тестового задания. [file:169]
-
-4. **Ожидание готовности БД.**
-   При старте сервис делает несколько попыток `Ping` к PostgreSQL перед запуском HTTP‑сервера, чтобы избежать падения из‑за гонки старта контейнеров. [file:169]
-
-5. **Доменные ошибки и HTTP‑коды.**
-   Все коды ошибок (`TEAM_EXISTS`, `PR_EXISTS`, `PR_MERGED`, `NOT_ASSIGNED`, `NO_CANDIDATE`, `NOT_FOUND`) маппятся в формат `ErrorResponse` с корректными HTTP‑статусами (`400`, `404`, `409`) согласно `openapi.yml`. [file:1]
-
-## Дальнейшее развитие
-
-Потенциальные улучшения, перекрывающие дополнительные пункты из ТЗ: [file:169]
-- Эндпоинт статистики (количество PR по статусам и/или по ревьюверам). [file:169]
-- Интеграционные тесты поверх HTTP API с использованием тестовой БД. [file:169]
-- Конфигурация линтера (например, `golangci-lint`) и её описание в README. [file:169]
-```
-
-[1](https://habr.com/ru/companies/otus/articles/531624/)
-[2](https://www.reddit.com/r/golang/comments/hcvm6j/simple_microservice_boilerplate/)
-[3](https://www.youtube.com/watch?v=VQAX_W2cXQc)
-[4](https://gitlab.mai.ru/online-store-pet-project/backend/product-service/-/blob/main/README.md)
-[5](https://praxiscode.io/knowledge-base/golang-project-structure-guide)
-[6](https://www.reddit.com/r/Python/comments/13kpoti/readmeai_autogenerate_readmemd_files/)
-[7](https://olezhek28.courses/microservices)
-[8](https://dev-gang.ru/article/micro-v-deistvii-czast--polnoe-rukovodstvo-po-bootstrap-9oyo5h33wi/)
-[9](https://gitlab.itcomgk.ru/crm-core-clients/certificates/-/blob/1.0.10/README.md)
-[10](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/88172437/c16ab72b-4dd3-4c35-adb2-8ba88dfd8e3f/Backend-trainee-assignment-autumn-2025.md)
+Реализованы следующие дополнительные фичи из ТЗ: 
+- эндпоинт статистики `/stats` (количество назначений по ревьюверам и PR по статусам).
+- метод массовой деактивации пользователей команды `/team/deactivateUsers` с безопасным переназначением открытых PR.
+- Makefile с командами сборки, запуска и обслуживания стенда.
